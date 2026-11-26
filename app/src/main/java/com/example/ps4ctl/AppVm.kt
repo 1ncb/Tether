@@ -95,7 +95,7 @@ class AppVm(private val app: Application) : AndroidViewModel(app) {
             log += "[app] connecting ${c.ip}:${c.klogPort}"
             Ps4Client.klogStream(c).catch { log += "[app] error: ${it.message}" }.collect {
                 log += it
-                if (log.size > 20_000) log.removeRange(0, 2_000)
+                if (log.size > 20_000) repeat(2_000) { log.removeAt(0) }
             }
             log += "[app] disconnected"
             connected = false

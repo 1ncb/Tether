@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.*
@@ -37,7 +38,7 @@ private val Dim = Color(0xFF888888)
 
 @Composable
 fun T(s: String, mod: Modifier = Modifier, c: Color = Color.White, size: Int = 13) =
-    Text(s, mod, color = c, fontFamily = Mono, fontSize = size.sp)
+    BasicText(s, mod, style = TextStyle(color = c, fontFamily = Mono, fontSize = size.sp))
 
 @Composable
 fun Btn(label: String, inverted: Boolean = false, onClick: () -> Unit) =
