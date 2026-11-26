@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
@@ -68,14 +69,14 @@ fun Root(vm: AppVm) {
         Modifier.fillMaxSize().background(Color.Black)
             .statusBarsPadding().navigationBarsPadding().imePadding().padding(8.dp)
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf("CONSOLES", "PAYLOADS", "KLOG").forEachIndexed { i, n ->
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("CONSOLES", "PAYLOADS", "PKGS", "KLOG").forEachIndexed { i, n ->
                 Btn(n, inverted = tab == i) { tab = i }
             }
         }
         Spacer(Modifier.height(8.dp))
         Box(Modifier.weight(1f)) {
-            when (tab) { 0 -> Consoles(vm); 1 -> Payloads(vm); else -> Klog(vm) }
+            when (tab) { 0 -> Consoles(vm); 1 -> Payloads(vm); 2 -> Pkgs(vm); else -> Klog(vm) }
         }
         Spacer(Modifier.height(6.dp))
         Box(Modifier.fillMaxWidth().border(1.dp, Dim).padding(6.dp)) {
@@ -179,5 +180,60 @@ fun Klog(vm: AppVm) {
             itemsIndexed(vis) { _, l -> T(l, size = 11) }
         }
         T("${vis.size}/${vm.log.size} lines  ${if (vm.connected) "[LIVE]" else "[OFF]"}", c = Dim, size = 11)
+    }
+}
+
+private fun fmt(b: Long): String = when {
+    b >= 1L shl 30 -> "%.2f GB".format(b / (1L shl 30).toDouble())
+    b >= 1L shl 20 -> "%.1f MB".format(b / (1L shl 20).toDouble())
+    b >= 1L shl 10 -> "%.1f KB".format(b / 1024.0)
+    else -> "$b B"
+}
+
+@Composable
+fun Pkgs(vm: AppVm) {
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) {
+        if (it.isNotEmpty()) vm.uploadPkgs(it)
+    }
+    val installPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) {
+        if (it.isNotEmpty()) vm.installFromPhone(it)
+    }
+    val view = LocalView.current
+    LaunchedEffect(vm.hosting) { view.keepScreenOn = vm.hosting }
+    LaunchedEffect(vm.selected) { if (vm.pkgs.isEmpty()) vm.listPkgs() }
+    Column(Modifier.fillMaxSize()) {
+        T("FTP: ${vm.current?.let { "${it.name} ${it.ip}:${it.ftpPort}" } ?: "none"}", size = 12)
+        Spacer(Modifier.height(4.dp))
+        Field(vm.pkgDir, { vm.pkgDir = it }, "/data/pkg", Modifier.fillMaxWidth())
+        Spacer(Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Btn("REFRESH") { vm.listPkgs() }
+            Btn("UPLOAD") { picker.launch(arrayOf("*/*")) }
+            Btn("INSTALL", inverted = true) { installPicker.launch(arrayOf("*/*")) }
+            if (vm.hosting) Btn("STOP") { vm.stopHost() }
+        }
+        if (vm.upProgress >= 0f) {
+            val n = (vm.upProgress * 20).toInt().coerceIn(0, 20)
+            Spacer(Modifier.height(4.dp))
+            T("[${"#".repeat(n)}${"-".repeat(20 - n)}] ${(vm.upProgress * 100).toInt()}%", size = 12)
+            T(vm.upName, c = Dim, size = 11)
+        }
+        Spacer(Modifier.height(4.dp))
+        LazyColumn(Modifier.weight(1f)) {
+            itemsIndexed(vm.pkgs) { _, e ->
+                var armed by remember(e.name) { mutableStateOf(false) }
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        T(if (e.isDir) e.name + "/" else e.name, size = 12)
+                        if (!e.isDir) T(fmt(e.size), c = Dim, size = 11)
+                    }
+                    if (!e.isDir) Btn(if (armed) "SURE?" else "DEL", inverted = armed) {
+                        if (armed) vm.deletePkg(e.name) else armed = true
+                    }
+                }
+                Divider()
+            }
+        }
+        T("INSTALL = phone > PS4 (GoldHEN loader, or RPI fallback). keep app open", c = Dim, size = 11)
     }
 }

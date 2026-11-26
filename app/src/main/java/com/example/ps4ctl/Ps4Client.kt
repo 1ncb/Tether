@@ -6,7 +6,11 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.*
 import java.io.InputStream
 import java.net.InetSocketAddress
+import java.net.HttpURLConnection
 import java.net.Socket
+import java.net.URL
+import org.json.JSONArray
+import org.json.JSONObject
 
 data class Console(
     val name: String,
@@ -38,6 +42,21 @@ object Ps4Client {
                         total
                     }
                 }
+            }
+        }
+
+    /** Remote Package Installer API (port 12800): tells the PS4 to download+install package URLs. */
+    suspend fun rpiInstall(c: Console, urls: List<String>): Result<String> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val body = JSONObject().put("type", "direct").put("packages", JSONArray(urls)).toString()
+                val conn = (URL("http://${c.ip}:12800/api/install").openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"; doOutput = true; connectTimeout = 4000; readTimeout = 15000
+                }
+                conn.outputStream.use { it.write(body.toByteArray()) }
+                val code = conn.responseCode
+                val txt = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.readText().orEmpty()
+                "$code $txt".trim()
             }
         }
 

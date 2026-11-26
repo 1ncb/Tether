@@ -58,7 +58,8 @@ class AppVm(private val app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val p = async { Ps4Client.isOpen(c.ip, c.payloadPort) }
             val k = async { Ps4Client.isOpen(c.ip, c.klogPort) }
-            status[c.ip] = "loader:${if (p.await()) "UP" else "--"} klog:${if (k.await()) "UP" else "--"}"
+            val r = async { Ps4Client.isOpen(c.ip, 12800) }
+            status[c.ip] = "loader:${if (p.await()) "UP" else "--"} klog:${if (k.await()) "UP" else "--"} rpi:${if (r.await()) "UP" else "--"}"
         }
     }
 
@@ -85,6 +86,102 @@ class AppVm(private val app: Application) : AndroidViewModel(app) {
             refresh()
         }
     }
+
+
+    // ---- pkgs (FTP) ----
+    val pkgs = mutableStateListOf<FtpEntry>()
+    var pkgDir by mutableStateOf("/data/pkg")
+    var upName by mutableStateOf("")
+    var upProgress by mutableStateOf(-1f)
+
+    fun listPkgs() {
+        val c = current ?: run { msg = "no console selected"; return }
+        val d = pkgDir.trimEnd('/').ifEmpty { "/" }
+        viewModelScope.launch {
+            msg = "ftp ls $d ..."
+            runCatching { withContext(Dispatchers.IO) { Ftp.connectTo(c).use { it.list(d) } } }
+                .onSuccess { r -> pkgs.clear(); pkgs += r.sortedBy { it.name.lowercase() }; msg = "${r.size} entries in $d" }
+                .onFailure { msg = "FTP: ${it.message}" }
+        }
+    }
+
+    fun uploadPkgs(uris: List<Uri>) {
+        val c = current ?: run { msg = "no console selected"; return }
+        val d = pkgDir.trimEnd('/')
+        viewModelScope.launch(Dispatchers.IO) {
+            for (uri in uris) {
+                var name = "upload_${System.currentTimeMillis()}.pkg"; var size = -1L
+                app.contentResolver.query(uri, null, null, null, null)?.use { q ->
+                    if (q.moveToFirst()) {
+                        q.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { name = q.getString(it) }
+                        q.getColumnIndex(OpenableColumns.SIZE).takeIf { it >= 0 }?.let { size = q.getLong(it) }
+                    }
+                }
+                upName = name; upProgress = 0f; msg = "uploading $name ..."
+                runCatching {
+                    app.contentResolver.openInputStream(uri)!!.use { input ->
+                        Ftp.connectTo(c).use { f ->
+                            f.upload("$d/$name", input) { sent -> if (size > 0) upProgress = sent.toFloat() / size }
+                        }
+                    }
+                }.onSuccess { msg = "uploaded $name" }.onFailure { msg = "upload failed: ${it.message}" }
+            }
+            upProgress = -1f
+            listPkgs()
+        }
+    }
+
+    fun deletePkg(name: String) {
+        val c = current ?: return
+        val d = pkgDir.trimEnd('/')
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { Ftp.connectTo(c).use { it.delete("$d/$name") } } }
+                .onSuccess { pkgs.removeAll { e -> e.name == name }; msg = "deleted $name" }
+                .onFailure { msg = "delete failed: ${it.message}" }
+        }
+    }
+
+    // ---- one-tap install (phone -> PS4 via Remote Package Installer) ----
+    private val host = HttpHost(app)
+    var hosting by mutableStateOf(false)
+
+    fun installFromPhone(uris: List<Uri>) {
+        val c = current ?: run { msg = "no console selected"; return }
+        viewModelScope.launch(Dispatchers.IO) {
+            val ip = phoneIp(c.ip) ?: run { msg = "can't find phone wifi ip"; return@launch }
+            val files = uris.mapNotNull { uri ->
+                var name = "file.pkg"; var size = -1L
+                app.contentResolver.query(uri, null, null, null, null)?.use { q ->
+                    if (q.moveToFirst()) {
+                        q.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { name = q.getString(it) }
+                        q.getColumnIndex(OpenableColumns.SIZE).takeIf { it >= 0 }?.let { size = q.getLong(it) }
+                    }
+                }
+                if (size <= 0) { msg = "$name: unknown size, skipped"; null }
+                else { val h = Dpi.readHeader(app, uri); Dpi.Pkg(uri, name, size, h?.first, h?.second ?: "PS4GD") }
+            }
+            if (files.isEmpty()) return@launch
+            val urls = try { files.map { "http://$ip:${host.port}${host.add(it.uri, it.name, it.size)}" } }
+                catch (e: Exception) { msg = "host failed: ${e.message}"; return@launch }
+            hosting = true
+            val viaPayload = Dpi.hasPayload(app) && files.all { it.contentId != null } &&
+                Ps4Client.isOpen(c.ip, c.payloadPort)
+            if (viaPayload) {
+                runCatching { Dpi.run(app, c, ip, urls, files) { msg = it } }
+                    .onFailure { msg = "payload route failed: ${it.message}" }
+            } else {
+                for (u in urls) {
+                    msg = "no payload route (loader off / no payload.bin / not a ps4 pkg) -> RPI ..."
+                    Ps4Client.rpiInstall(c, listOf(u))
+                        .onSuccess { msg = "RPI: $it" }
+                        .onFailure { msg = "RPI failed: ${it.message}" }
+                }
+            }
+        }
+    }
+
+    fun stopHost() { host.stop(); hosting = false }
+    override fun onCleared() { host.stop() }
 
     // ---- klog ----
     fun connectKlog() {
