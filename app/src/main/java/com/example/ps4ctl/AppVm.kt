@@ -56,10 +56,9 @@ class AppVm(private val app: Application) : AndroidViewModel(app) {
 
     fun refresh() = consoles.toList().forEach { c ->
         viewModelScope.launch {
-            val p = async { Ps4Client.isOpen(c.ip, c.payloadPort) }
             val k = async { Ps4Client.isOpen(c.ip, c.klogPort) }
             val r = async { Ps4Client.isOpen(c.ip, 12800) }
-            status[c.ip] = "loader:${if (p.await()) "UP" else "--"} klog:${if (k.await()) "UP" else "--"} rpi:${if (r.await()) "UP" else "--"}"
+            status[c.ip] = "loader:not probed klog:${if (k.await()) "UP" else "--"} rpi:${if (r.await()) "UP" else "--"}"
         }
     }
 
@@ -164,16 +163,15 @@ class AppVm(private val app: Application) : AndroidViewModel(app) {
             val urls = try { files.map { "http://$ip:${host.port}${host.add(it.uri, it.name, it.size)}" } }
                 catch (e: Exception) { msg = "host failed: ${e.message}"; return@launch }
             hosting = true
-            val viaPayload = Dpi.hasPayload(app) && files.all { it.contentId != null } &&
-                Ps4Client.isOpen(c.ip, c.payloadPort)
+            val viaPayload = Dpi.hasPayload(app) && files.all { it.contentId != null }
             if (viaPayload) {
                 runCatching { Dpi.run(app, c, ip, urls, files) { msg = it } }
-                    .onFailure { msg = "payload route failed: ${it.message}" }
+                    .onFailure { msg = payloadFail(it) }
             } else {
                 val why = when {
                     !Dpi.hasPayload(app) -> "this build has no payload.bin"
                     files.any { it.contentId == null } -> "not a ps4 pkg"
-                    else -> "loader port ${c.payloadPort} is closed"
+                    else -> "unknown"
                 }
                 for (u in urls) {
                     msg = "$why -> trying RPI ..."
@@ -192,12 +190,11 @@ class AppVm(private val app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             val ip = phoneIp(c.ip) ?: run { msg = "can't find phone wifi ip"; return@launch }
             if (!Dpi.hasPayload(app)) { msg = "this build has no payload.bin"; return@launch }
-            if (!Ps4Client.isOpen(c.ip, c.payloadPort)) { msg = "loader port ${c.payloadPort} closed - use SCAN on Consoles tab"; return@launch }
             msg = "reading ${e.name} header over FTP ..."
             val h = runCatching { Ftp.connectTo(c).use { Dpi.parseHeader(it.head(path, 0x80)) } }.getOrNull()
             if (h == null) { msg = "${e.name}: not a ps4 pkg, or FTP read failed"; return@launch }
             runCatching { Dpi.run(app, c, ip, listOf(path), listOf(Dpi.Pkg(Uri.EMPTY, e.name, e.size, h.first, h.second))) { msg = it } }
-                .onFailure { msg = "payload route failed: ${it.message}" }
+                .onFailure { msg = payloadFail(it) }
         }
     }
 
@@ -205,12 +202,17 @@ class AppVm(private val app: Application) : AndroidViewModel(app) {
         val c = current ?: run { msg = "no console selected"; return }
         viewModelScope.launch {
             msg = "scanning ${c.ip} ..."
-            val ports = listOf(9020, 9021, 9090, 9095, 2121, 3232, 12800, 744, 1337, 8080)
+            val ports = listOf(2121, 3232, 12800, 744, 1337, 8080) // loader ports are NOT probed: a bare connect can kill GoldHEN's loader
             val open = ports.map { p -> async { p to Ps4Client.isOpen(c.ip, p, 800) } }
                 .awaitAll().filter { it.second }.map { it.first }
             msg = "open ports: ${open.joinToString(" ").ifEmpty { "none" }}"
         }
     }
+
+    private fun payloadFail(e: Throwable): String =
+        if (e.message.orEmpty().contains("refused", true))
+            "loader refused. GoldHEN > Servers Settings: toggle PayLoader Server off then on, then retry without REFRESH/SCAN first"
+        else "payload route failed: ${e.message}"
 
     fun stopHost() { host.stop(); hosting = false }
     override fun onCleared() { host.stop() }
