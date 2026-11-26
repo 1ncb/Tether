@@ -13,12 +13,20 @@ jobs:
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: 8.7 }
-      - name: Fetch DPI installer payload
+      - name: Build DPI installer payload
         run: |
           if [ ! -f app/src/main/assets/payload.bin ]; then
-            git clone --depth 1 -b DN8 https://github.com/marcussacana/DirectPackageInstaller /tmp/dpi
+            git clone --depth 1 --recurse-submodules --shallow-submodules -b DN8 https://github.com/marcussacana/DirectPackageInstaller /tmp/dpi
+            src=$(find /tmp/dpi -name info.c | head -n1)
+            test -n "$src" || { echo "info.c not found"; find /tmp/dpi -maxdepth 3 | head -60; exit 1; }
+            d=$(dirname "$src")
+            echo "payload dir: $d"; ls -la "$d"
             p=$(find /tmp/dpi -name payload.bin | head -n1)
-            test -n "$p" || { echo "payload.bin not found in DPI repo"; exit 1; }
+            if [ -z "$p" ]; then
+              make -C "$d"
+              p=$(find "$d" -name payload.bin | head -n1)
+            fi
+            test -n "$p" || { echo "payload.bin missing after make"; ls -la "$d"; exit 1; }
             mkdir -p app/src/main/assets && cp "$p" app/src/main/assets/payload.bin
           fi
           python3 -c "d=open('app/src/main/assets/payload.bin','rb').read(); assert b'\\xb4'*6 in d, 'marker missing'; print('payload ok', len(d))"
