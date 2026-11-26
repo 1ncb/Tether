@@ -1,0 +1,36 @@
+name: unzip
+on:
+  push:
+    paths: ['**.zip']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unzip archives
+        run: |
+          shopt -s globstar nullglob
+          for z in **/*.zip; do
+            tmp=$(mktemp -d)
+            unzip -q -o "$z" -x '.github/*' '*/.github/*' -d "$tmp"
+            # if the zip has a single top-level folder, flatten it
+            if [ "$(ls -A "$tmp" | wc -l)" = 1 ] && [ -d "$tmp/$(ls "$tmp")" ]; then
+              tmp="$tmp/$(ls "$tmp")"
+            fi
+            cp -a "$tmp"/. "$(dirname "$z")"/
+            git rm -q "$z"
+          done
+      - name: Commit and push
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add -A
+          git diff --cached --quiet || (git commit -m "unzip uploaded archives" && git push)
+      - name: Trigger build
+        run: gh workflow run build.yml || true
+        env:
+          GH_TOKEN: ${{ github.token }}
