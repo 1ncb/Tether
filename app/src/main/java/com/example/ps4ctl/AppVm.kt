@@ -170,13 +170,45 @@ class AppVm(private val app: Application) : AndroidViewModel(app) {
                 runCatching { Dpi.run(app, c, ip, urls, files) { msg = it } }
                     .onFailure { msg = "payload route failed: ${it.message}" }
             } else {
+                val why = when {
+                    !Dpi.hasPayload(app) -> "this build has no payload.bin"
+                    files.any { it.contentId == null } -> "not a ps4 pkg"
+                    else -> "loader port ${c.payloadPort} is closed"
+                }
                 for (u in urls) {
-                    msg = "no payload route (loader off / no payload.bin / not a ps4 pkg) -> RPI ..."
+                    msg = "$why -> trying RPI ..."
                     Ps4Client.rpiInstall(c, listOf(u))
                         .onSuccess { msg = "RPI: $it" }
-                        .onFailure { msg = "RPI failed: ${it.message}" }
+                        .onFailure { msg = "$why; RPI also failed: ${it.message}" }
                 }
             }
+        }
+    }
+
+    /** Install a PKG that is already on the PS4 (e.g. /data/pkg) using the DPI payload with a local path. EXPERIMENTAL. */
+    fun installOnPs4(e: FtpEntry) {
+        val c = current ?: run { msg = "no console selected"; return }
+        val path = "${pkgDir.trimEnd('/')}/${e.name}"
+        viewModelScope.launch(Dispatchers.IO) {
+            val ip = phoneIp(c.ip) ?: run { msg = "can't find phone wifi ip"; return@launch }
+            if (!Dpi.hasPayload(app)) { msg = "this build has no payload.bin"; return@launch }
+            if (!Ps4Client.isOpen(c.ip, c.payloadPort)) { msg = "loader port ${c.payloadPort} closed - use SCAN on Consoles tab"; return@launch }
+            msg = "reading ${e.name} header over FTP ..."
+            val h = runCatching { Ftp.connectTo(c).use { Dpi.parseHeader(it.head(path, 0x80)) } }.getOrNull()
+            if (h == null) { msg = "${e.name}: not a ps4 pkg, or FTP read failed"; return@launch }
+            runCatching { Dpi.run(app, c, ip, listOf(path), listOf(Dpi.Pkg(Uri.EMPTY, e.name, e.size, h.first, h.second))) { msg = it } }
+                .onFailure { msg = "payload route failed: ${it.message}" }
+        }
+    }
+
+    fun scanPorts() {
+        val c = current ?: run { msg = "no console selected"; return }
+        viewModelScope.launch {
+            msg = "scanning ${c.ip} ..."
+            val ports = listOf(9020, 9021, 9090, 9095, 2121, 3232, 12800, 744, 1337, 8080)
+            val open = ports.map { p -> async { p to Ps4Client.isOpen(c.ip, p, 800) } }
+                .awaitAll().filter { it.second }.map { it.first }
+            msg = "open ports: ${open.joinToString(" ").ifEmpty { "none" }}"
         }
     }
 

@@ -88,6 +88,19 @@ class Ftp private constructor(private val host: String) : Closeable {
         if (c2 !in 200..299) throw IOException(t2)
     }
 
+    /** First n bytes of a remote file (used to read PKG headers without downloading the file). */
+    fun head(path: String, n: Int): ByteArray {
+        cmd("TYPE I")
+        val d = pasv()
+        val (code, t) = cmd("RETR $path")
+        if (code !in 100..199) { d.close(); throw IOException(t) }
+        val b = ByteArray(n); var got = 0
+        val ins = d.getInputStream()
+        while (got < n) { val r = ins.read(b, got, n - got); if (r < 0) break; got += r }
+        d.close()
+        return b.copyOf(got)
+    }
+
     fun delete(path: String) {
         val (c, t) = cmd("DELE $path")
         if (c !in 200..299) throw IOException(t)

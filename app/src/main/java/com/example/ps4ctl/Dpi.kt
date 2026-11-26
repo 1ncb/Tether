@@ -25,18 +25,22 @@ object Dpi {
 
     fun hasPayload(ctx: Context) = ctx.assets.list("")?.contains("payload.bin") == true
 
-    /** Reads content id + type from the PS4 PKG header (magic 7F 'CNT', id at 0x40, type at 0x74). */
-    fun readHeader(ctx: Context, uri: Uri): Pair<String, String>? = runCatching {
-        val b = ByteArray(0x80); var n = 0
-        ctx.contentResolver.openInputStream(uri)!!.use {
-            while (n < b.size) { val r = it.read(b, n, b.size - n); if (r < 0) break; n += r }
-        }
-        if (n < 0x80 || b[0] != 0x7F.toByte() || b[1] != 'C'.code.toByte() || b[2] != 'N'.code.toByte() || b[3] != 'T'.code.toByte())
+    /** Content id + type from a PS4 PKG header (magic 7F 'CNT', id at 0x40, type at 0x74). */
+    fun parseHeader(b: ByteArray): Pair<String, String>? = runCatching {
+        if (b.size < 0x80 || b[0] != 0x7F.toByte() || b[1] != 'C'.code.toByte() || b[2] != 'N'.code.toByte() || b[3] != 'T'.code.toByte())
             return@runCatching null
         val id = String(b, 0x40, 0x24, Charsets.US_ASCII).trimEnd('\u0000').trim()
         if (id.length < 20) return@runCatching null
         val ct = ByteBuffer.wrap(b, 0x74, 4).int // big-endian
         id to (if (ct == 0x1B) "PS4AC" else "PS4GD")
+    }.getOrNull()
+
+    fun readHeader(ctx: Context, uri: Uri): Pair<String, String>? = runCatching {
+        val b = ByteArray(0x80); var n = 0
+        ctx.contentResolver.openInputStream(uri)!!.use {
+            while (n < b.size) { val r = it.read(b, n, b.size - n); if (r < 0) break; n += r }
+        }
+        parseHeader(b.copyOf(n))
     }.getOrNull()
 
     private fun patched(ctx: Context, ip: String, port: Int): ByteArray {
@@ -80,7 +84,7 @@ object Dpi {
             }
             ss.soTimeout = 90_000
             ss.accept().use { it.getOutputStream().apply { write(le32(0)); flush() } } // tell payload to exit
-            status("queued ${pkgs.size} pkg(s). PS4 downloads from phone - keep app open")
+            status("payload done (${pkgs.size} pkg). watch the PS4 notifications for DPI: messages")
         } finally { runCatching { ss.close() } }
     }
 }

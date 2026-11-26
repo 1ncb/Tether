@@ -93,7 +93,7 @@ fun Consoles(vm: AppVm) {
     var kp by remember { mutableStateOf("3232") }
     Column(Modifier.fillMaxSize()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            T("SAVED CONSOLES", Modifier.weight(1f)); Btn("REFRESH") { vm.refresh() }
+            T("SAVED CONSOLES", Modifier.weight(1f)); Btn("SCAN") { vm.scanPorts() }; Spacer(Modifier.width(4.dp)); Btn("REFRESH") { vm.refresh() }
         }
         Spacer(Modifier.height(6.dp))
         LazyColumn(Modifier.weight(1f)) {
@@ -209,7 +209,7 @@ fun Pkgs(vm: AppVm) {
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Btn("REFRESH") { vm.listPkgs() }
             Btn("UPLOAD") { picker.launch(arrayOf("*/*")) }
-            Btn("INSTALL", inverted = true) { installPicker.launch(arrayOf("*/*")) }
+            Btn("PUSH", inverted = true) { installPicker.launch(arrayOf("*/*")) }
             if (vm.hosting) Btn("STOP") { vm.stopHost() }
         }
         if (vm.upProgress >= 0f) {
@@ -227,13 +227,17 @@ fun Pkgs(vm: AppVm) {
                         T(if (e.isDir) e.name + "/" else e.name, size = 12)
                         if (!e.isDir) T(fmt(e.size), c = Dim, size = 11)
                     }
-                    if (!e.isDir) Btn(if (armed) "SURE?" else "DEL", inverted = armed) {
-                        if (armed) vm.deletePkg(e.name) else armed = true
+                    if (!e.isDir) {
+                        Btn("INST", inverted = true) { vm.installOnPs4(e) }
+                        Spacer(Modifier.width(4.dp))
+                        Btn(if (armed) "SURE?" else "DEL", inverted = armed) {
+                            if (armed) vm.deletePkg(e.name) else armed = true
+                        }
                     }
                 }
                 Divider()
             }
         }
-        T("INSTALL = phone > PS4 (GoldHEN loader, or RPI fallback). keep app open", c = Dim, size = 11)
+        T("INST = install file already on PS4 (experimental). PUSH = send phone file, keep app open", c = Dim, size = 11)
     }
 }
