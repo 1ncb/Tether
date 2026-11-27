@@ -10,7 +10,17 @@ s = open(f).read()
 
 inc = "#include <sys/mman.h>"
 assert s.count(inc) == 1, "include anchor not found"
-s = s.replace(inc, inc + "\n#include <fcntl.h>\n#include <unistd.h>")
+decls = r'''
+extern int dpi_open(const char*, int, int) __asm__("open");
+extern long dpi_read(int, void*, unsigned long) __asm__("read");
+extern long dpi_write(int, const void*, unsigned long) __asm__("write");
+extern int dpi_close(int) __asm__("close");
+#define DPI_O_RDONLY 0
+#define DPI_O_WRONLY 1
+#define DPI_O_CREAT 0x200
+#define DPI_O_TRUNC 0x400
+'''
+s = s.replace(inc, inc + decls)
 
 helper = r'''static void dpi_note(int(*send)(int, const char*), char* buf, const char* pre, int val) {
 	int k = 0;
@@ -52,21 +62,21 @@ code = r'''if (bgft_params.content_url[0] == '@') {
 			const char* nm = bgft_params.content_name;
 			if (nm[0] == 'C' && nm[1] == 'O' && nm[2] == 'P' && nm[3] == 'Y' && nm[4] == '|') {
 				char* buf = lm + 0x1000;
-				int fin = open(path, O_RDONLY, 0);
-				int fout = open("/user/data/dpi_copy.pkg", O_WRONLY | O_CREAT | O_TRUNC, 0777);
+				int fin = dpi_open(path, DPI_O_RDONLY, 0);
+				int fout = dpi_open("/user/data/dpi_copy.pkg", DPI_O_WRONLY | DPI_O_CREAT | DPI_O_TRUNC, 0777);
 				int ok = (fin >= 0 && fout >= 0);
 				long n = 0;
-				while (ok && (n = read(fin, buf, 0x100000)) > 0) {
+				while (ok && (n = dpi_read(fin, buf, 0x100000)) > 0) {
 					char* p = buf;
 					while (n > 0) {
-						long w = write(fout, p, n);
+						long w = dpi_write(fout, p, n);
 						if (w <= 0) { ok = 0; break; }
 						p += w; n -= w;
 					}
 				}
 				if (ok && n < 0) ok = 0;
-				if (fin >= 0) close(fin);
-				if (fout >= 0) close(fout);
+				if (fin >= 0) dpi_close(fin);
+				if (fout >= 0) dpi_close(fout);
 				if (!ok) {
 					sceSysUtilSendSystemNotificationWithText(222, "DPI: local install copy failed (disk full?)");
 					continue;
