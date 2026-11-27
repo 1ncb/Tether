@@ -70,13 +70,13 @@ fun Root(vm: AppVm) {
             .statusBarsPadding().navigationBarsPadding().imePadding().padding(8.dp)
     ) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf("CONSOLES", "PAYLOADS", "PKGS", "KLOG").forEachIndexed { i, n ->
+            listOf("CONSOLES", "PAYLOADS", "PKGS", "APPS", "KLOG").forEachIndexed { i, n ->
                 Btn(n, inverted = tab == i) { tab = i }
             }
         }
         Spacer(Modifier.height(8.dp))
         Box(Modifier.weight(1f)) {
-            when (tab) { 0 -> Consoles(vm); 1 -> Payloads(vm); 2 -> Pkgs(vm); else -> Klog(vm) }
+            when (tab) { 0 -> Consoles(vm); 1 -> Payloads(vm); 2 -> Pkgs(vm); 3 -> Apps(vm); else -> Klog(vm) }
         }
         Spacer(Modifier.height(6.dp))
         Box(Modifier.fillMaxWidth().border(1.dp, Dim).padding(6.dp)) {
@@ -212,6 +212,8 @@ fun Pkgs(vm: AppVm) {
             Btn("PUSH", inverted = true) { installPicker.launch(arrayOf("*/*")) }
             if (vm.hosting) Btn("STOP") { vm.stopHost() }
         }
+        Spacer(Modifier.height(4.dp))
+        Btn(if (vm.keepPkg) "KEEP PKG: ON (copy first, needs 2x space)" else "KEEP PKG: OFF (installer moves the file)") { vm.toggleKeep() }
         if (vm.upProgress >= 0f) {
             val n = (vm.upProgress * 20).toInt().coerceIn(0, 20)
             Spacer(Modifier.height(4.dp))
@@ -239,5 +241,26 @@ fun Pkgs(vm: AppVm) {
             }
         }
         T("INST = install file already on PS4 (experimental). PUSH = send phone file, keep app open", c = Dim, size = 11)
+    }
+}
+
+@Composable
+fun Apps(vm: AppVm) {
+    LaunchedEffect(vm.selected) { if (vm.apps.isEmpty()) vm.loadApps() }
+    Column(Modifier.fillMaxSize()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            T("INSTALLED APPS (${vm.apps.size})", Modifier.weight(1f), size = 12)
+            Btn("REFRESH") { vm.loadApps() }
+        }
+        Spacer(Modifier.height(6.dp))
+        LazyColumn(Modifier.weight(1f)) {
+            itemsIndexed(vm.apps) { _, a ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) { T(a.title, size = 12); T(a.id, c = Dim, size = 11) }
+                    Btn("LAUNCH", inverted = true) { vm.launchApp(a) }
+                }
+                Divider()
+            }
+        }
     }
 }

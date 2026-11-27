@@ -12,6 +12,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
+class AppEntry(val id: String, val title: String)
+
 class AppVm(private val app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("ps4", 0)
     private val dir = File(app.filesDir, "payloads").apply { mkdirs() }
@@ -26,6 +28,9 @@ class AppVm(private val app: Application) : AndroidViewModel(app) {
     var filter by mutableStateOf("")
     var connected by mutableStateOf(false)
     private var job: Job? = null
+
+    var keepPkg by mutableStateOf(prefs.getBoolean("keep", true))
+    fun toggleKeep() { keepPkg = !keepPkg; prefs.edit().putBoolean("keep", keepPkg).apply() }
 
     val current: Console? get() = consoles.getOrNull(selected)
 
@@ -199,8 +204,43 @@ class AppVm(private val app: Application) : AndroidViewModel(app) {
             val h = runCatching { Ftp.connectTo(c).use { Dpi.parseHeader(it.head(path, 0x80)) } }.getOrNull()
             if (h == null) { msg = "${e.name}: not a ps4 pkg, or FTP read failed"; return@launch }
             val devPath = path.replaceFirst(Regex("^/data/"), "/user/data/") // PS4-side path of the same file
-            runCatching { Dpi.run(app, c, ip, listOf(devPath), listOf(Dpi.Pkg(Uri.EMPTY, e.name, e.size, h.first, h.second))) { msg = it } }
+            val wait = if (keepPkg) (60_000L + e.size / 8_000L).coerceAtMost(3_600_000L).toInt() else 45_000
+            if (keepPkg) msg = "copying ${e.name} on the PS4 first (keeps the original) - can take a while ..."
+            val shown = (if (keepPkg) "COPY|" else "") + e.name
+            runCatching { Dpi.run(app, c, ip, listOf(devPath), listOf(Dpi.Pkg(Uri.EMPTY, shown, e.size, h.first, h.second)), finishWaitMs = wait) { msg = it } }
                 .onFailure { msg = payloadFail(it) + (crashSummary()?.let { c2 -> " | $c2" } ?: "") }
+        }
+    }
+
+    // ---- installed apps (list via FTP, launch via payload) ----
+    val apps = mutableStateListOf<AppEntry>()
+
+    fun loadApps() {
+        val c = current ?: run { msg = "no console selected"; return }
+        viewModelScope.launch(Dispatchers.IO) {
+            msg = "listing /user/app ..."
+            val ids = runCatching { Ftp.connectTo(c).use { it.list("/user/app") } }
+                .getOrElse { msg = "FTP: ${it.message}"; return@launch }
+                .filter { it.isDir && Regex("^[A-Z]{4}\\d{5}$").matches(it.name) }.map { it.name }.sorted()
+            apps.clear()
+            for (id in ids) {
+                val t = runCatching {
+                    Ftp.connectTo(c).use { Sfo.title(it.head("/user/appmeta/$id/param.sfo", 0x4000)) }
+                }.getOrNull()
+                apps += AppEntry(id, t ?: id)
+            }
+            msg = "${apps.size} installed apps"
+        }
+    }
+
+    fun launchApp(a: AppEntry) {
+        val c = current ?: run { msg = "no console selected"; return }
+        viewModelScope.launch(Dispatchers.IO) {
+            val ip = phoneIp(c.ip) ?: run { msg = "can't find phone wifi ip"; return@launch }
+            if (!Dpi.hasLocalPatch(app)) { msg = "payload.bin lacks the patch (check CI: 'main.c patched')"; return@launch }
+            if (!connected) { connectKlog(); delay(600) }
+            runCatching { Dpi.run(app, c, ip, listOf("@${a.id}"), listOf(Dpi.Pkg(Uri.EMPTY, a.title, 0, "LAUNCH", "PS4GD"))) { msg = it } }
+                .onFailure { msg = payloadFail(it) + (crashSummary()?.let { x -> " | $x" } ?: "") }
         }
     }
 

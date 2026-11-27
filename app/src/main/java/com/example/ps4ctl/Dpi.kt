@@ -81,7 +81,7 @@ object Dpi {
     /** Closes any listener left over from an earlier attempt (frees port 9899). */
     fun cancel() { runCatching { current?.close() }; current = null }
 
-    suspend fun run(ctx: Context, c: Console, phoneIp: String, urls: List<String>, pkgs: List<Pkg>, status: (String) -> Unit) {
+    suspend fun run(ctx: Context, c: Console, phoneIp: String, urls: List<String>, pkgs: List<Pkg>, finishWaitMs: Int = 45_000, status: (String) -> Unit) {
         cancel()
         val ss = ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(META_PORT)) }
         current = ss
@@ -97,7 +97,7 @@ object Dpi {
                 s.use { it.tcpNoDelay = true; it.getOutputStream().apply { write(message(p, urls[i])); flush() } }
                 status("sent info for ${p.name}; waiting for the PS4 to register it ...")
             }
-            ss.soTimeout = 45_000
+            ss.soTimeout = finishWaitMs
             val fin = try { ss.accept() } catch (e: SocketTimeoutException) {
                 throw IOException("info sent but payload never finished - it hit an error. read the PS4's 'DPI:' notification")
             }
