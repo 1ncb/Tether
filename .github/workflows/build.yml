@@ -24,6 +24,9 @@ jobs:
             p=$(find /tmp/dpi -name payload.bin | head -n1)
             if [ -z "$p" ]; then
               sudo apt-get update -qq && sudo apt-get install -y -qq yasm
+              # local files (path starts with /): skip the HTTP download register, use the debug/local register call
+              sed -i "s|rv = sceBgftDownloadRegisterTask(&bgft_params, &task);|rv = (bgft_params.content_url[0] == '/') ? 0x80990088 : sceBgftDownloadRegisterTask(\\&bgft_params, \\&task);|" "$d/main.c"
+              grep -q "content_url\\[0\\] == '/'" "$d/main.c" || { echo "payload patch failed"; exit 1; }
               make -C "$d"
               p=$(find "$d" -name payload.bin | head -n1)
             fi
