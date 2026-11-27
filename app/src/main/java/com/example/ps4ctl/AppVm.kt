@@ -214,7 +214,7 @@ class AppVm(private val app: Application) : AndroidViewModel(app) {
             "loader refused. GoldHEN > Servers Settings: toggle PayLoader Server off then on, then retry without REFRESH/SCAN first"
         else "payload route failed: ${e.message}"
 
-    fun stopHost() { host.stop(); hosting = false }
+    fun stopHost() { host.stop(); Dpi.cancel(); hosting = false }
     override fun onCleared() { host.stop() }
 
     // ---- klog ----

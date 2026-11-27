@@ -69,22 +69,39 @@ object Dpi {
         return o.toByteArray()
     }
 
+    @Volatile private var current: ServerSocket? = null
+
+    /** Closes any listener left over from an earlier attempt (frees port 9899). */
+    fun cancel() { runCatching { current?.close() }; current = null }
+
     suspend fun run(ctx: Context, c: Console, phoneIp: String, urls: List<String>, pkgs: List<Pkg>, status: (String) -> Unit) {
+        cancel()
         val ss = ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(META_PORT)) }
+        current = ss
         try {
             status("sending installer payload ...")
             Ps4Client.sendPayload(c, ByteArrayInputStream(patched(ctx, phoneIp, META_PORT))).getOrThrow()
             for ((i, p) in pkgs.withIndex()) {
-                status("waiting for PS4 (${i + 1}/${pkgs.size}) ${p.contentId} ${p.type}")
+                status("waiting for payload to call back (${i + 1}/${pkgs.size}) ${p.contentId} ${p.type}")
                 ss.soTimeout = if (i == 0) 60_000 else 90_000
                 val s = try { ss.accept() } catch (e: SocketTimeoutException) {
-                    throw IOException("PS4 never connected back - check its notifications")
+                    throw IOException("payload never connected back - read the PS4's 'DPI:' notification")
                 }
                 s.use { it.tcpNoDelay = true; it.getOutputStream().apply { write(message(p, urls[i])); flush() } }
+                status("sent info for ${p.name}; waiting for the PS4 to register it ...")
             }
-            ss.soTimeout = 90_000
-            ss.accept().use { it.getOutputStream().apply { write(le32(0)); flush() } } // tell payload to exit
-            status("payload done (${pkgs.size} pkg). watch the PS4 notifications for DPI: messages")
-        } finally { runCatching { ss.close() } }
+            ss.soTimeout = 45_000
+            val fin = try { ss.accept() } catch (e: SocketTimeoutException) {
+                throw IOException("info sent but payload never finished - it hit an error. read the PS4's 'DPI:' notification")
+            }
+            fin.use { it.getOutputStream().apply { write(le32(0)); flush() } } // tell payload to exit
+            status("payload finished OK - check the PS4 notifications / download list")
+        } catch (e: Exception) {
+            if (current !== ss) return // superseded by a newer attempt
+            throw e
+        } finally {
+            if (current === ss) current = null
+            runCatching { ss.close() }
+        }
     }
 }
