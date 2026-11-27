@@ -190,11 +190,16 @@ class AppVm(private val app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             val ip = phoneIp(c.ip) ?: run { msg = "can't find phone wifi ip"; return@launch }
             if (!Dpi.hasPayload(app)) { msg = "this build has no payload.bin"; return@launch }
+            if (!Dpi.hasLocalPatch(app)) {
+                msg = "payload.bin lacks the local-install patch: CI did not run tools/patch_payload.py (check build.yml + 'main.c patched' in the log)"
+                return@launch
+            }
+            if (!connected) { connectKlog(); delay(600) } // capture klog so a payload crash can be reported here
             msg = "reading ${e.name} header over FTP ..."
             val h = runCatching { Ftp.connectTo(c).use { Dpi.parseHeader(it.head(path, 0x80)) } }.getOrNull()
             if (h == null) { msg = "${e.name}: not a ps4 pkg, or FTP read failed"; return@launch }
             runCatching { Dpi.run(app, c, ip, listOf(path), listOf(Dpi.Pkg(Uri.EMPTY, e.name, e.size, h.first, h.second))) { msg = it } }
-                .onFailure { msg = payloadFail(it) }
+                .onFailure { msg = payloadFail(it) + (crashSummary()?.let { c2 -> " | $c2" } ?: "") }
         }
     }
 
@@ -207,6 +212,16 @@ class AppVm(private val app: Application) : AndroidViewModel(app) {
                 .awaitAll().filter { it.second }.map { it.first }
             msg = "open ports: ${open.joinToString(" ").ifEmpty { "none" }}"
         }
+    }
+
+    /** Looks in the captured klog for a crash dump after the last payload launch. */
+    private fun crashSummary(): String? {
+        val lines = log.toList()
+        val start = lines.indexOfLast { it.contains("payload launched successfully") }
+        if (start < 0) return null
+        val keys = listOf("# signal:", "# proc name:", "# reason:", "# rip:", "# rdi:", "# rax:")
+        val hits = lines.drop(start).filter { l -> keys.any { l.startsWith(it) } }
+        return if (hits.isEmpty()) null else "PAYLOAD CRASHED: " + hits.joinToString(" | ") { it.removePrefix("# ").trim() }
     }
 
     private fun payloadFail(e: Throwable): String =

@@ -23,6 +23,13 @@ object Dpi {
 
     class Pkg(val uri: Uri, val name: String, val size: Long, val contentId: String?, val type: String)
 
+    /** True if payload.bin was built with tools/patch_payload.py (its message string is in the binary). */
+    fun hasLocalPatch(ctx: Context): Boolean = runCatching {
+        val b = ctx.assets.open("payload.bin").use { it.readBytes() }
+        val n = "local install".toByteArray()
+        (0..b.size - n.size).any { i -> n.indices.all { b[i + it] == n[it] } }
+    }.getOrDefault(false)
+
     fun hasPayload(ctx: Context) = ctx.assets.list("")?.contains("payload.bin") == true
 
     /** Content id + type from a PS4 PKG header (magic 7F 'CNT', id at 0x40, type at 0x74). */
