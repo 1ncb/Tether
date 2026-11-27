@@ -198,7 +198,8 @@ class AppVm(private val app: Application) : AndroidViewModel(app) {
             msg = "reading ${e.name} header over FTP ..."
             val h = runCatching { Ftp.connectTo(c).use { Dpi.parseHeader(it.head(path, 0x80)) } }.getOrNull()
             if (h == null) { msg = "${e.name}: not a ps4 pkg, or FTP read failed"; return@launch }
-            runCatching { Dpi.run(app, c, ip, listOf(path), listOf(Dpi.Pkg(Uri.EMPTY, e.name, e.size, h.first, h.second))) { msg = it } }
+            val devPath = path.replaceFirst(Regex("^/data/"), "/user/data/") // PS4-side path of the same file
+            runCatching { Dpi.run(app, c, ip, listOf(devPath), listOf(Dpi.Pkg(Uri.EMPTY, e.name, e.size, h.first, h.second))) { msg = it } }
                 .onFailure { msg = payloadFail(it) + (crashSummary()?.let { c2 -> " | $c2" } ?: "") }
         }
     }
